@@ -1,0 +1,268 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+from itertools import combinations
+import warnings
+
+warnings.filterwarnings('ignore')
+
+class FeatureAnalyzer:
+    def __init__(self, df, target_col=None):
+        """
+        Инициализация анализатора признаков
+        
+        Параметры:
+        df - DataFrame с данными
+        target_col - имя целевой переменной (если есть)
+        """
+        self.df = df.copy()
+        self.target_col = target_col
+        self.numeric_cols = self.df.select_dtypes(include=np.number).columns.tolist()
+        self.cat_cols = self.df.select_dtypes(include=['object', 'category']).columns.tolist()
+        
+        if target_col and target_col in self.numeric_cols:
+            self.problem_type = 'regression'
+        elif target_col:
+            self.problem_type = 'classification'
+        else:
+            self.problem_type = None
+    
+    def basic_stats(self):
+        """Основная статистика по признакам"""
+        print("="*50)
+        print("БАЗОВАЯ СТАТИСТИКА ПО ПРИЗНАКАМ")
+        print("="*50)
+        
+        # Для числовых признаков
+        if self.numeric_cols:
+            print("\nЧисловые признаки:")
+            display(self.df[self.numeric_cols].describe().T)
+        
+        # Для категориальных признаков
+        if self.cat_cols:
+            print("\nКатегориальные признаки:")
+            display(self.df[self.cat_cols].describe(include=['object', 'category']).T)
+    
+    def correlation_analysis(self, threshold=0.7):
+        """Анализ корреляций между признаками"""
+        print("="*50)
+        print("АНАЛИЗ КОРРЕЛЯЦИЙ")
+        print("="*50)
+        
+        if len(self.numeric_cols) < 2:
+            print("Недостаточно числовых признаков для анализа корреляций")
+            return
+        
+        # Матрица корреляций
+        corr_matrix = self.df[self.numeric_cols].corr()
+        
+        # Визуализация
+        plt.figure(figsize=(12, 10))
+        sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap='coolwarm', 
+                    center=0, linewidths=.5)
+        plt.title("Матрица корреляций между признаками")
+        plt.show()
+        
+        # Поиск сильно коррелирующих пар
+        high_corr_pairs = []
+        for i, j in combinations(range(len(self.numeric_cols)), 2):
+            if abs(corr_matrix.iloc[i, j]) > threshold:
+                high_corr_pairs.append((
+                    self.numeric_cols[i], 
+                    self.numeric_cols[j], 
+                    corr_matrix.iloc[i, j]
+                ))
+        
+        if high_corr_pairs:
+            print(f"\nПризнаки с корреляцией > {threshold}:")
+            for pair in high_corr_pairs:
+                print(f"{pair[0]} и {pair[1]}: {pair[2]:.3f}")
+        else:
+            print(f"\nНет признаков с корреляцией > {threshold}")
+    
+    def mutual_info_analysis(self, n_neighbors=5):
+        """Анализ взаимной информации между признаками и целевой переменной"""
+        if not self.target_col:
+            print("Целевая переменная не указана, анализ взаимной информации невозможен")
+            return
+        
+        print("="*50)
+        print("АНАЛИЗ ВЗАИМНОЙ ИНФОРМАЦИИ С ЦЕЛЕВОЙ ПЕРЕМЕННОЙ")
+        print("="*50)
+        
+        X = self.df.drop(columns=[self.target_col])
+        y = self.df[self.target_col]
+        
+        # Для числовых признаков
+        if self.problem_type == 'regression':
+            mi = mutual_info_regression(X[self.numeric_cols], y, n_neighbors=n_neighbors)
+        else:
+            mi = mutual_info_classif(X[self.numeric_cols], y, n_neighbors=n_neighbors)
+        
+        mi_df = pd.DataFrame({
+            'feature': self.numeric_cols,
+            'mutual_info': mi
+        }).sort_values('mutual_info', ascending=False)
+        
+        print("\nВзаимная информация для числовых признаков:")
+        display(mi_df)
+        
+        # Визуализация
+        plt.figure(figsize=(10, 6))
+        sns.barplot(data=mi_df, y='feature', x='mutual_info', palette='viridis')
+        plt.title(f"Взаимная информация с целевой переменной '{self.target_col}'")
+        plt.xlabel("Mutual Information")
+        plt.ylabel("Признаки")
+        plt.show()
+    
+    def pca_analysis(self, n_components=2):
+        """Анализ главных компонент для выявления скрытых структур"""
+        if len(self.numeric_cols) < 2:
+            print("Недостаточно числовых признаков для PCA")
+            return
+        
+        print("="*50)
+        print("АНАЛИЗ ГЛАВНЫХ КОМПОНЕНТ (PCA)")
+        print("="*50)
+        
+        # Масштабирование данных
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(self.df[self.numeric_cols])
+        
+        # Применение PCA
+        pca = PCA(n_components=n_components)
+        principal_components = pca.fit_transform(X_scaled)
+        
+        # Создание DataFrame с компонентами
+        pca_df = pd.DataFrame(data=principal_components, 
+                             columns=[f'PC{i+1}' for i in range(n_components)])
+        
+        # Визуализация
+        plt.figure(figsize=(10, 6))
+        if self.target_col:
+            pca_df['target'] = self.df[self.target_col].values
+            sns.scatterplot(data=pca_df, x='PC1', y='PC2', hue='target', palette='viridis')
+        else:
+            sns.scatterplot(data=pca_df, x='PC1', y='PC2')
+        
+        plt.title(f"Визуализация первых {n_components} главных компонент")
+        plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
+        plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
+        plt.show()
+        
+        # Важность признаков для компонент
+        loadings = pd.DataFrame(
+            pca.components_.T,
+            columns=[f'PC{i+1}' for i in range(n_components)],
+            index=self.numeric_cols
+        )
+        
+        print("\nВклад признаков в главные компоненты:")
+        display(loadings)
+    
+    def cluster_analysis(self, n_clusters=3):
+        """Кластерный анализ для выявления скрытых групп"""
+        if len(self.numeric_cols) < 2:
+            print("Недостаточно числовых признаков для кластеризации")
+            return
+        
+        print("="*50)
+        print("КЛАСТЕРНЫЙ АНАЛИЗ")
+        print("="*50)
+        
+        # Масштабирование данных
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(self.df[self.numeric_cols])
+        
+        # Кластеризация K-means
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        clusters = kmeans.fit_predict(X_scaled)
+        
+        # Визуализация с t-SNE для уменьшения размерности
+        tsne = TSNE(n_components=2, random_state=42)
+        X_tsne = tsne.fit_transform(X_scaled)
+        
+        plt.figure(figsize=(10, 6))
+        sns.scatterplot(x=X_tsne[:, 0], y=X_tsne[:, 1], hue=clusters, palette='viridis')
+        plt.title(f"Кластеризация данных (t-SNE + K-means, {n_clusters} кластеров)")
+        plt.xlabel("t-SNE 1")
+        plt.ylabel("t-SNE 2")
+        plt.show()
+        
+        # Анализ характеристик кластеров
+        self.df['cluster'] = clusters
+        if len(self.numeric_cols) > 0:
+            cluster_stats = self.df.groupby('cluster')[self.numeric_cols].mean()
+            print("\nСредние значения признаков по кластерам:")
+            display(cluster_stats)
+        
+        self.df.drop(columns=['cluster'], inplace=True)
+    
+    def categorical_analysis(self):
+        """Анализ категориальных признаков"""
+        if not self.cat_cols:
+            print("Нет категориальных признаков для анализа")
+            return
+        
+        print("="*50)
+        print("АНАЛИЗ КАТЕГОРИАЛЬНЫХ ПРИЗНАКОВ")
+        print("="*50)
+        
+        for col in self.cat_cols:
+            print(f"\nАнализ признака '{col}':")
+            
+            # Частоты значений
+            value_counts = self.df[col].value_counts(normalize=True)
+            display(value_counts)
+            
+            # Визуализация
+            plt.figure(figsize=(10, 4))
+            sns.countplot(data=self.df, y=col, order=value_counts.index)
+            plt.title(f"Распределение признака '{col}'")
+            plt.show()
+            
+            # Связь с целевой переменной (если есть)
+            if self.target_col:
+                if self.problem_type == 'regression':
+                    plt.figure(figsize=(10, 4))
+                    sns.boxplot(data=self.df, x=col, y=self.target_col)
+                    plt.title(f"Распределение '{self.target_col}' по категориям '{col}'")
+                    plt.show()
+                else:
+                    cross_tab = pd.crosstab(self.df[col], self.df[self.target_col], normalize='index')
+                    display(cross_tab)
+                    
+                    plt.figure(figsize=(10, 4))
+                    sns.heatmap(cross_tab, annot=True, fmt=".2f", cmap='Blues')
+                    plt.title(f"Зависимость между '{col}' и '{self.target_col}'")
+                    plt.show()
+    
+    def comprehensive_analysis(self):
+        """Комплексный анализ всех признаков"""
+        self.basic_stats()
+        self.correlation_analysis()
+        if self.target_col:
+            self.mutual_info_analysis()
+        self.pca_analysis()
+        self.cluster_analysis()
+        self.categorical_analysis()
+
+# Пример использования
+if __name__ == "__main__":
+    # Загрузка данных (пример)
+    from sklearn.datasets import load_iris
+    data = load_iris()
+    df = pd.DataFrame(data.data, columns=data.feature_names)
+    df['target'] = data.target
+    
+    # Инициализация анализатора
+    analyzer = FeatureAnalyzer(df, target_col='target')
+    
+    # Запуск комплексного анализа
+    analyzer.comprehensive_analysis()
